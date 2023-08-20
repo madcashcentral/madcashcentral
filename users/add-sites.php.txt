@@ -1,0 +1,329 @@
+<?php
+session_start();
+
+// Database configuration
+$host = "localhost";
+$username = "u379614330_submit";
+$password = "]BpD^6cXmR+J0=[8";
+$database = "u379614330_sublink";
+
+// reCAPTCHA configuration
+$recaptchaSiteKey = "6LcRgRIaAAAAABVCdKc5y1WEEhsal5J63mFOPv4G";
+$recaptchaSecretKey = "6LcRgRIaAAAAABeU589G39732MmwcAhI0ftebUWq";
+
+// Create a new MySQLi connection
+$connection = new mysqli($host, $username, $password, $database);
+
+// Check the connection
+if ($connection->connect_error) {
+    die("Connection failed: " . $connection->connect_error);
+}
+
+// Function to clean user input
+function cleanInput($input)
+{
+    $input = trim($input);
+    $input = stripslashes($input);
+    $input = htmlspecialchars($input);
+    return $input;
+}
+
+// Function to validate form data
+function validateForm($title, $category, $description, $address)
+{
+    $errors = array();
+
+    if (empty($title)) {
+        $errors[] = "Title is required.";
+    }
+
+    if (empty($category)) {
+        $errors[] = "Category is required.";
+    }
+
+    if (empty($description)) {
+        $errors[] = "Description is required.";
+    }
+
+    if (empty($address)) {
+        $errors[] = "Address is required.";
+    }
+
+    return $errors;
+}
+
+// Function to get all directories from the database
+function getDirectories($connection)
+{
+    $directories = array();
+
+    $sql = "SELECT * FROM directories";
+    $result = $connection->query($sql);
+
+    if ($result->num_rows > 0) {
+        while ($row = $result->fetch_assoc()) {
+            $directories[] = $row;
+        }
+    } else {
+        return false;
+    }
+
+    return $directories;
+}
+
+// Function to handle user registration
+function registerUser($connection, $username, $email, $password)
+{
+    $username = cleanInput($username);
+    $email = cleanInput($email);
+    $password = cleanInput($password);
+
+    $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
+
+    $sql = "INSERT INTO users (username, email, password) VALUES (?, ?, ?)";
+    $statement = $connection->prepare($sql);
+    $statement->bind_param("sss", $username, $email, $hashedPassword);
+
+    if ($statement->execute()) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+// Function to handle user login
+function login($connection, $username, $password)
+{
+    $username = cleanInput($username);
+    $password = cleanInput($password);
+
+    $sql = "SELECT * FROM users WHERE username = ?";
+    $statement = $connection->prepare($sql);
+    $statement->bind_param("s", $username);
+    $statement->execute();
+    $result = $statement->get_result();
+
+    if ($result->num_rows == 1) {
+        $user = $result->fetch_assoc();
+
+        if (password_verify($password, $user["password"])) {
+            $_SESSION["user_id"] = $user["id"];
+            $_SESSION["username"] = $user["username"];
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Function to handle user logout
+function logout()
+{
+    session_unset();
+    session_destroy();
+    header("Location: index.php");
+    exit();
+}
+
+// Verify reCAPTCHA response
+function verifyRecaptcha($recaptchaSecretKey, $recaptchaResponse)
+{
+    $url = "https://www.google.com/recaptcha/api/siteverify";
+    $data = array(
+        "secret" => $recaptchaSecretKey,
+        "response" => $recaptchaResponse
+    );
+
+    $options = array(
+        "http" => array(
+            "header" => "Content-type: application/x-www-form-urlencoded\r\n",
+            "method" => "POST",
+            "content" => http_build_query($data)
+        )
+    );
+
+    $context = stream_context_create($options);
+    $result = file_get_contents($url, false, $context);
+
+    if ($result === false) {
+        return false;
+    }
+
+    $response = json_decode($result, true);
+
+    if (isset($response["success"]) && $response["success"] === true) {
+        return true;
+    }
+
+    return false;
+}
+
+
+function get_html_content($type) {
+
+//    $sql = "SELECT content FROM html WHERE type=$TYPE";
+//    $statement = $connection->prepare($sql);
+//    $statement->bind_param("s", $content);
+//    $statement->execute();
+//    $result = $statement->get_result();
+
+
+    $res = mysqli_query($connection, "SELECT `content` FROM `html` WHERE `type`='" . $type . "'");
+    mysqli_data_seek($res, 0);
+    $cont = mysqli_fetch_array($res)[0];
+    return $cont;
+}
+
+function show_html_content($type) {
+    echo(get_html_content($type));
+}
+
+
+
+
+
+
+// Check if the user is logged in
+if (isset($_SESSION["user_id"])) {
+    // User is logged in, display submission form
+
+    // Check if the form is submitted
+    if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["title"], $_POST["category"], $_POST["description"], $_POST["address"])) {
+        // Retrieve form data
+        $title = cleanInput($_POST["title"]);
+        $category = cleanInput($_POST["category"]);
+        $description = cleanInput($_POST["description"]);
+        $address = cleanInput($_POST["address"]);
+
+        // Validate form data
+        $errors = validateForm($title, $category, $description, $address);
+
+        if (count($errors) > 0) {
+            // Display validation errors
+            foreach ($errors as $error) {
+                echo "<p>Error: $error</p>";
+            }
+        } else {
+            // Insert the link into the links table for each directory
+            $directories = getDirectories($connection);
+
+            if ($directories !== false) {
+                foreach ($directories as $directory) {
+                    $directoryId = $directory["id"];
+
+                    $sql = "INSERT INTO links (user_id, directory_id, title, category, description, address) VALUES (?, ?, ?, ?, ?, ?)";
+                    $statement = $connection->prepare($sql);
+                    $statement->bind_param("iissss", $_SESSION["user_id"], $directoryId, $title, $category, $description, $address);
+                    $statement->execute();
+                }
+
+                echo "<p>Link submitted successfully.</p>";
+            } else {
+                echo "<p>No directories found.</p>";
+            }
+        }
+    }
+
+    // Display submission form
+    echo '
+        <h1>Link Submission</h1>
+
+        <form method="POST" action="' . $_SERVER["PHP_SELF"] . '">
+            <label for="title">Title:</label><br>
+            <input type="text" name="title" required><br><br>
+
+            <label for="category">Category:</label><br>
+            <input type="text" name="category" required><br><br>
+
+            <label for="description">Description:</label><br>
+            <textarea name="description" required></textarea><br><br>
+
+            <label for="address">Address:</label><br>
+            <input type="text" name="address" required><br><br>
+
+            <input type="submit" value="Submit">
+        </form>
+
+        <br>
+        <a href="logout.php">Logout</a>
+    ';
+} else {
+    // User is not logged in, display registration and login screens
+
+    if ($_SERVER["REQUEST_METHOD"] == "POST") {
+        // Check if the form is a registration or login form
+        if (isset($_POST["register"])) {
+            // Registration form submitted
+            $username = cleanInput($_POST["username"]);
+            $email = cleanInput($_POST["email"]);
+            $password = cleanInput($_POST["password"]);
+            $recaptchaResponse = $_POST["g-recaptcha-response"];
+
+            $registrationErrors = array();
+
+            // Validate form data
+            if (empty($username)) {
+                $registrationErrors[] = "Username is required.";
+            }
+
+            if (empty($email)) {
+                $registrationErrors[] = "Email is required.";
+            } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $registrationErrors[] = "Invalid email format.";
+            }
+
+            if (empty($password)) {
+                $registrationErrors[] = "Password is required.";
+            }
+
+            if (empty($recaptchaResponse)) {
+                $registrationErrors[] = "reCAPTCHA verification is required.";
+            } elseif (!verifyRecaptcha($recaptchaSecretKey, $recaptchaResponse)) {
+                $registrationErrors[] = "reCAPTCHA verification failed.";
+            }
+
+            if (count($registrationErrors) == 0) {
+                // Register the user
+                if (registerUser($connection, $username, $email, $password)) {
+                    echo "<p>Registration successful. You can now login.</p>";
+                } else {
+                    echo "<p>Error registering user.</p>";
+                }
+            } else {
+                // Display registration errors
+                foreach ($registrationErrors as $error) {
+                    echo "<p>Error: $error</p>";
+                }
+            }
+        } 
+    }
+
+    // Display registration screen
+
+	include("header.html");
+
+    echo '
+	<script src="https://www.google.com/recaptcha/api.js" async defer></script>
+        <h1>Membership Site</h1>
+
+        <h2>Registration</h2>
+        <form method="POST" action="' . $_SERVER["PHP_SELF"] . '">
+            <label for="username">Username:</label><br>
+            <input type="text" name="username" required><br><br>
+
+            <label for="email">Email:</label><br>
+            <input type="email" name="email" required><br><br>
+
+            <label for="password">Password:</label><br>
+            <input type="password" name="password" required><br><br>
+
+            <div class="g-recaptcha" data-sitekey="' . $recaptchaSiteKey . '"></div><br>
+
+            <input type="submit" name="register" value="Register">
+        </form>
+    ';
+	include("footer.html");
+}
+
+$connection->close();
+?>
